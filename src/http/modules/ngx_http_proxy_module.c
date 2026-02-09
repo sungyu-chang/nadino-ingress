@@ -1206,6 +1206,9 @@ pdin_rdma_recv_handler(ngx_event_t *ev)
 {
     ngx_http_request_t *r = (ngx_http_request_t *)ev->data;
 
+    /* Free the dynamically allocated event (posted from DOCA callback) */
+    ngx_free(ev);
+
     if (r->connection->destroyed) {
         pdin_check_request_state(r);
         ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "Connection already destroyed");
@@ -1213,10 +1216,8 @@ pdin_rdma_recv_handler(ngx_event_t *ev)
         r->connection->close = 1;
         r->connection->error = 1;
 
-        // ngx_free(ev);
         return;
     }
-    // ngx_free(ev);
 
     const char *response = "";
     pdin_create_response(response, r); /* Construct and send response */
@@ -1243,6 +1244,7 @@ pdin_rdma_send_handler(ngx_http_request_t *r)
         }
     }
 
+    r->count++;
     pdin_rdma_send((void *)r, (void *)pdin_rdma_recv_handler, (void*)r->connection->log, (void*)r->pool);
 
     return;
@@ -1261,9 +1263,9 @@ pdin_rdma_proxy_request_handler(ngx_http_request_t *r)
     if (r->pool == NULL)
         printf("!!! r pool is null \n");
 
+    r->count++;
     pdin_rdma_send((void *)r, (void *)pdin_rdma_recv_handler, (void*)r->connection->log, (void*)r->pool);
 
-    r->count++;
     return NGX_DONE;
 
     // return ngx_http_read_client_request_body(r, pdin_rdma_send_handler);

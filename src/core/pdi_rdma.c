@@ -683,30 +683,32 @@ pdin_send_http_response(const char* response, ngx_http_request_t *r)
 }
 
 static void
-pdin_rdma_recv_handler(ngx_http_request_t *r)
+pdin_rdma_post_http_response(struct pdin_rdma_md_s *md)
 {
-    if (r->connection->destroyed) {
-        r->connection->close = 1;
-        r->connection->error = 1;
-        ngx_log_error(NGX_LOG_ERR, r->connection->log, 0, "Connection already destroyed");
+    ngx_event_t *ev;
+    ngx_http_request_t *r = (ngx_http_request_t *)md->ngx_http_request_pt;
+    ngx_event_handler_pt handler = (ngx_event_handler_pt)md->pdin_rdma_handler_pt;
+    ngx_log_t *log = (ngx_log_t *)md->pdin_rdma_handler_log_pt;
+
+    /*
+     * Do NOT call nginx HTTP functions directly from DOCA PE callback context.
+     * doca_pe_progress() runs before ngx_process_events_and_timers(), so
+     * manipulating connection/event state here corrupts the nginx event queue.
+     * Instead, post an event so the response is processed during nginx's
+     * event phase.
+     */
+    ev = ngx_calloc(sizeof(ngx_event_t), ngx_cycle->log);
+    if (ev == NULL) {
+        ngx_log_error(NGX_LOG_ERR, ngx_cycle->log, 0,
+                      "pdin: failed to allocate event for RDMA response");
         return;
     }
 
-    const char *response = "";
-    pdin_send_http_response(response, r); /* Construct and send response */
+    ev->data = r;
+    ev->handler = handler;
+    ev->log = log;
 
-    return;
-}
-
-static void
-pdin_rdma_post_http_response(struct pdin_rdma_md_s *md)
-{
-    void *r = md->ngx_http_request_pt;
-    // void *handler = md->pdin_rdma_handler_pt;
-    // void *log = md->pdin_rdma_handler_log_pt;
-    // void *pool = md->ngx_http_request_mempool_pt;
-
-    pdin_rdma_recv_handler((ngx_http_request_t *)r);
+    ngx_post_event(ev, &ngx_posted_events);
 
     return;
 }
